@@ -3,7 +3,7 @@
 ## Description
 
 This script produces a file called `Makefile.matrix`.
-This is the Makefile that you'd use to build unit tests from C++ source code.
+You can use this to build and run unit tests from C++ source code.
 
 Each suite of tests is built from a single .cpp file that contains a number
   of directives.
@@ -31,12 +31,12 @@ Say you have a file named `test1.cpp`:
 ```
 The block comment delimited by `/** ..  **/` is combed out by the script and parsed.
 
-On the second line, some `@cxxparams` values are given in quotes.
+On the second line, some `@cxxparams` values are in quotes.
 These parameters are applied to *all* targets of this module.
 
-On the third line, the script finds that there are two alternatives to the @cxxparams for this test module.
+On the third line, the script finds that there are two alternatives to the `@cxxparams` for this test module.
 So, it will generate Makefile rules to build targets `test1-a.obj` and `test1-b.obj`, and
-  subsequently executables named `test1-a` and `test1-b`.
+  also executables named `test1-a` and `test1-b`.
 Each will have an alternate definition of these parameters based on the values in the list.
 
 Other axes can be defined for other stages of the compile/link/run testing process.
