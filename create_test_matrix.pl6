@@ -19,7 +19,7 @@ class TestGenerator {
 	has $.prefix is rw;
 	has @.ccparams is rw = [""];
 	has @.ldparams is rw = [""];
-	has @.inputs is rw = [];
+	has @.inputs is rw = [""];
 	has @.ops is rw = [];
 	has @.texes is rw = [];
 	has @.cases is rw = [];
@@ -35,7 +35,7 @@ class TestExecutable {
 	has $.deps is rw = "";
 	
 	method exename { $!uid.chars > 0 ?? $!prefix ~ '-' ~ $!uid !! $!prefix }
-	method objname { self.exename ~ ".obj" }
+	method objname { (so $!sourcefn ~~ /\.[cpp|cxx|cc]$/) ?? self.exename ~ ".obj" !! self.exename ~ ".o" }
 }
 
 # A single test case that has an input and is scheduled to be run with other tests
@@ -52,7 +52,10 @@ sub infix:<|~|> (Str $a, Str $b) {
 	else { return $a ~ " " ~ $b; } 
 }
 
-my @generators;
+my @generators = [];
+my @texes = [];
+my @cases = [];
+	
 
 grammar TestInfo {
 	
@@ -60,7 +63,7 @@ grammar TestInfo {
 	rule statement-list { [ <statement> ] * }
 	rule statement { <include-statement> | <ccparams-statement> | <ldparams-statement> | <input-statement> | <define-variants-statement> }
 	
-	rule include-statement { '@include' ':' <simple-value> }
+	rule include-statement { '@include' <simple-value> }
 	rule ccparams-statement { '@ccparams' <value> }	
 	rule ldparams-statement { '@ldparams' <value> }
 	rule input-statement { '@input' <simple-value> }
@@ -78,7 +81,6 @@ grammar TestInfo {
 	}
 	
 }
-
 class Metaparser {
 
 	has $.rootfn is rw;
@@ -123,7 +125,7 @@ class Metaparser {
 	method filename ($/) { make ($<blob> // $<quoted-string>).made; }
 	method value ($/) { make ($<simple-value> // $<value-list>).made  }
 	method simple-value ($/) { make ($<blob> // $<quoted-string>).made; }
-	method value-list ($/) { make $<value>.elems > 1 ?? map( { $_.made }, $<value>) !! [ <value>.made ]; }
+	method value-list ($/) { make $<value>.elems > 1 ?? $<value>».made !! [ <value>.made ]; }
 	method quoted-string ($/) { make $/.Str.substr(1).chop(1); }
 	method identifier ($/) { make $/.Str;  }
 	method blob ($/) { make $/.Str;  }
@@ -140,9 +142,8 @@ sub warning (Str $str) {
 
 my Str $makefile = "";
 
-#for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filename { # loop over test?? cpp files
-{
-	my $filename = "test1.cpp".IO;
+for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filename { # loop over test?? cpp files
+	#my $filename = "test1.cpp".IO;
   my TestGenerator $gen = TestGenerator.new( sourcefn => $filename.Str, prefix => ($filename.Str ~~ /(.*)\.[cxx|cpp|cc|c]/)[0].Str );
   my $fh = $filename.open;
   for $fh.comb(/\/\*\*(.+)\*\*\//, True) -> $match {
@@ -153,30 +154,36 @@ my Str $makefile = "";
 		$grammar.parse($comment, actions => $parser);
 		$gen.ops.append( $parser.ops );
   }
-	
-	$gen.ops ==> map({ $_($gen); });
 
-	my @texes = [];
+	$gen.ops ==> map({ $_($gen) });
 	
 	($gen.ccparams X, $gen.ldparams).kv
 	==> map(-> $i,($cc,$ld)	{ TestExecutable.new(uid=>$i, sourcefn=>$gen.sourcefn, prefix=>$gen.prefix, ccparams=>$cc, ldparams=>$ld) })
-	==> @texes
-	==> map({ (.objname, .sourcefn, .ccparams, .sourcefn, .objname) })
-	==> map({ sprintf("%s: %s\n\t\$(CXX) %s -c %s -o %s", $_) }) 
-	==> my @objrules;
+	==> my @t;
+	$gen.texes = @t;
+	@texes.append: @t;
 
-	@texes
-	==> map({ (.exename, .objname, .ldparams, .exename, .objname) })
-	==> map({ sprintf("%s: %s\n\t\$(CXX) %s -o %s %s", $_) })
-	==> my @exerules;
-	
-	(@texes X, $gen.inputs).kv
-	==> map({ .texe.exename, .texe.exename, .texe.exename, .inputfile })
-	==> map({ sprintf("%s-run: %s\n\t%s %s", $_) })
-	==> my @caserules;
-	
-	say join("\n\n", @objrules, @exerules, @caserules);
-	
-	
+	($gen.texes X, $gen.inputs).kv
+	==> map(-> $i, ($texe, $in) { TestCase.new(uid=>$i, texe=>$texe, inputfile=>$in) })
+	==> @cases;
+
 }
 
+
+@texes
+	==> map({ (.objname, .sourcefn, .ccparams, .sourcefn, .objname) })
+	==> map({ sprintf("%s: %s\n\t\$(CXX) \$(CXXPARAMS) %s -c %s -o %s", $_) }) 
+	==> my @objrules;
+
+@texes
+	==> map({ (.exename, .objname, .ldparams, .exename, .objname) })
+	==> map({ sprintf("%s: %s\n\t\$(CXX) \$(LDPARAMS) %s -o %s %s", $_) })
+	==> my @exerules;
+	
+@cases
+	==> map({ ( .texe.exename, .texe.exename, .texe.exename, .inputfile ) })
+	==> map({ sprintf("%s-run: %s\n\t./%s %s", $_) })
+	==> my @caserules;
+
+$makefile = join("\n\n", @objrules, @exerules, @caserules);
+say $makefile;
