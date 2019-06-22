@@ -23,7 +23,7 @@ Say you have a file named `test1.cpp`:
 ```c++
 /**
  * @cxxparams "-I.. -g"
- * @cxxparams [ -DDEBUG=0, -DDEBUG=0 ]
+ * @cxxparams [ -DDEBUG=0, -DDEBUG=1 ]
  **/
 
 #include <stdio.h>
