@@ -9,23 +9,9 @@
 # product matrix that determines a large number of executables to be built and run.
 #
 
-use Grammar::Tracer;
+#use Grammar::Tracer;
 
-# A single test case that has an input and is scheduled to be run with other tests
-class TestCase {
-	has $.uid is rw = "";
-	has $.inputfile is rw = "";
-}
-
-# A single executable file that can run several tests
-class TestExecutable {
-	has $.uid is rw = "";
-	has $.sourcefn is rw = "";
-	has $.prefix is rw = "";
-	has @.cases is rw = [];
-	
-	method exename { $!uid.elems > 0 ?? $!prefix ~ '-' ~ $!uid !! $!prefix }
-}
+my $homedir = $*PROGRAM.absolute.IO.resolve.dirname.IO;
 
 # A source file generates one of these using all the /** **/ comments found inside it
 class TestGenerator {
@@ -33,8 +19,30 @@ class TestGenerator {
 	has $.prefix is rw;
 	has @.ccparams is rw = [""];
 	has @.ldparams is rw = [""];
-	has @.ops is rw;
+	has @.inputs is rw = [];
+	has @.ops is rw = [];
 	has @.texes is rw = [];
+	has @.cases is rw = [];
+}
+
+# A single executable file that can run several tests
+class TestExecutable {
+	has $.uid is rw = "";
+	has $.sourcefn is rw = "";
+	has $.prefix is rw = "";
+	has $.ccparams is rw = "";
+	has $.ldparams is rw = "";
+	has $.deps is rw = "";
+	
+	method exename { $!uid.chars > 0 ?? $!prefix ~ '-' ~ $!uid !! $!prefix }
+	method objname { self.exename ~ ".obj" }
+}
+
+# A single test case that has an input and is scheduled to be run with other tests
+class TestCase {
+	has $.uid is rw = "";
+	has $.inputfile is rw = "";
+	has TestExecutable $.texe is rw;
 }
 
 sub infix:<|~|> (Str $a, Str $b) {
@@ -55,15 +63,13 @@ grammar TestInfo {
 	rule include-statement { '@include' ':' <simple-value> }
 	rule ccparams-statement { '@ccparams' <value> }	
 	rule ldparams-statement { '@ldparams' <value> }
-	rule input-statement { '@input' <value> }
-
-	rule define-variants-statement { '@define-variants' <identifier> <assignment>  }
-	rule assignment { <simple-value> | <value-list>   }
+	rule input-statement { '@input' <simple-value> }
+	rule define-variants-statement { '@define-variants' <identifier> <value>  }
 	
 	rule value-list { '[' <value> [ ',' <value> ] * ']' }
-	token identifier { <[a..zA..Z_]> (<[\w]>)* }
-	token simple-value { <blob> | <quoted-string> }
 	token value { <simple-value> | <value-list> }
+	token simple-value { <blob> | <quoted-string> }
+	token identifier { <[a..zA..Z_]> (<[\w]>)* }
 	token quoted-string { "\"" <-["]>+ "\"" }
 	token blob { <[\S]-[\,]-[\"]>+ }
 	
@@ -90,35 +96,36 @@ class Metaparser {
 		}();
 	}
 	method ccparams-statement($/) {
-		Array($<value>) ==> map({$_.Str}) ==> my @values;
+		$<value> ==> map({$_.made}) ==> my @values;
 		@.ops.append: sub (TestGenerator $gen is rw) {
 			$gen.ccparams = $gen.ccparams X|~| @values;
 		}
 	}
 	method input-statement($/) {
-		Array($<value>) ==> map({$_.Str}) ==> my @values;
+		$<value> ==> map({$_.made}) ==> my @values;
 		@.ops.append: sub (TestGenerator $gen is rw) {
+			$gen.inputs.append: @values;
 		}
 	}
 	method ldparams-statement($/) {
-		Array($<value>) ==> map({$_.Str}) ==> my @values;
+		$<value> ==> map({$_.made}) ==> my @values;
 		@.ops.append: sub (TestGenerator $gen is rw) {
 			$gen.ldparams = $gen.ldparams X|~| @values;
 		}
 	}
-	
-	method identifier ($/) { make $/.Str;  }
+	method define-variants-statement($/) {
+		my $id = $<identifier>.made;
+		my @values = $<value>.made;
+		@.ops.append: sub (TestGenerator $gen is rw) {
+			$gen.ccparams = $gen.ccparams X|~| map({ "-D" ~ $id ~ "=" ~ $_ }, @values); 
+		}
+	}
 	method filename ($/) { make ($<blob> // $<quoted-string>).made; }
 	method value ($/) { make ($<simple-value> // $<value-list>).made  }
 	method simple-value ($/) { make ($<blob> // $<quoted-string>).made; }
-	method value-list ($/) {
-		if $<value>.elems > 1 {
-			make [,] map( { $_.Str }, $<value>);
-		} else {
-			make [ <value>.Str ];
-		}
-	}
-	method quoted-string ($/) { make $/.Str.substr(1).chop(1);  }
+	method value-list ($/) { make $<value>.elems > 1 ?? map( { $_.made }, $<value>) !! [ <value>.made ]; }
+	method quoted-string ($/) { make $/.Str.substr(1).chop(1); }
+	method identifier ($/) { make $/.Str;  }
 	method blob ($/) { make $/.Str;  }
 
 }
@@ -131,13 +138,12 @@ sub warning (Str $str) {
 	say "\e[38;5;166mWarning\e[0m: " ~ $str;
 }
 
-##
-# Act I: In which source files are scanned and directives are parsed from block comments.
-##
+my Str $makefile = "";
+
 #for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filename { # loop over test?? cpp files
 {
 	my $filename = "test1.cpp".IO;
-  my TestGenerator $gen = TestGenerator.new( sourcefn => $filename, prefix => ($filename ~~ /(.*)\.[cxx|cpp|cc|c]/)[0].Str );
+  my TestGenerator $gen = TestGenerator.new( sourcefn => $filename.Str, prefix => ($filename.Str ~~ /(.*)\.[cxx|cpp|cc|c]/)[0].Str );
   my $fh = $filename.open;
   for $fh.comb(/\/\*\*(.+)\*\*\//, True) -> $match {
 	  my $comment = $match[0];
@@ -148,8 +154,28 @@ sub warning (Str $str) {
 		$gen.ops.append( $parser.ops );
   }
 	
-	$gen.ops ==> map({ $_($gen); }) ==> my @gentexes;
-	$gen.texes.append: @gentexes;
+	$gen.ops ==> map({ $_($gen); });
+
+	my @texes = [];
+	
+	($gen.ccparams X, $gen.ldparams).kv
+	==> map(-> $i,($cc,$ld)	{ TestExecutable.new(uid=>$i, sourcefn=>$gen.sourcefn, prefix=>$gen.prefix, ccparams=>$cc, ldparams=>$ld) })
+	==> @texes
+	==> map({ (.objname, .sourcefn, .ccparams, .sourcefn, .objname) })
+	==> map({ sprintf("%s: %s\n\t\$(CXX) %s -c %s -o %s", $_) }) 
+	==> my @objrules;
+
+	@texes
+	==> map({ (.exename, .objname, .ldparams, .exename, .objname) })
+	==> map({ sprintf("%s: %s\n\t\$(CXX) %s -o %s %s", $_) })
+	==> my @exerules;
+	
+	(@texes X, $gen.inputs).kv
+	==> map({ .texe.exename, .texe.exename, .texe.exename, .inputfile })
+	==> map({ sprintf("%s-run: %s\n\t%s %s", $_) })
+	==> my @caserules;
+	
+	say join("\n\n", @objrules, @exerules, @caserules);
 	
 	
 }
