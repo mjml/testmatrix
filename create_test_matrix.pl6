@@ -107,7 +107,7 @@ class Metaparser {
 		my $grammar = TestInfo.new;
 		my $inner = Metaparser.new(:rootfn<$!rootfn>);
 		my $fn = $<simple-value>.Str;
-		(my $fh = open($fn)) or (warning("Couldn't open @included file " ~ $fn) and return);
+		my $fh = open($fn) or warning("Couldn't open @included file " ~ $fn) and return;
 		sub {
 			$grammar.parse($fh.slurp, actions => $inner);
 			@.ops.append($inner.ops);
@@ -197,7 +197,6 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 	@cases.append: @c;
 
 }
-
 
 @texes
 	==> map({ (.objpath, .sourcefn, .cxxheaderpath, .cxxparams, .sourcefn, .objpath) })
