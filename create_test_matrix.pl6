@@ -12,14 +12,16 @@
 #use Grammar::Tracer;
 
 my $homedir = $*PROGRAM.dirname.IO;
-my @default_ccparams = [ "-I" ~ $homedir.Str ];
+my @default_cxxparams = [ "-I" ~ $homedir.Str, "-Iinclude" ];
 my $build_dir = "./build";
+my $include_dir = "include";
 
 # A source file generates one of these using all the /** **/ comments found inside it
 class TestGenerator {
 	has $.sourcefn is rw;
 	has $.prefix is rw;
-	has @.ccparams is rw = [join @default_ccparams];
+	has @.cxxparams is rw = [join @default_cxxparams];
+	has @.cxxheader is rw = [""];
 	has @.ldparams is rw = [""];
 	has @.inputs is rw = [""];
 	has @.ops is rw = [];
@@ -32,14 +34,16 @@ class TestExecutable {
 	has $.uid is rw = "";
 	has $.sourcefn is rw = "";
 	has $.prefix is rw = "";
-	has $.ccparams is rw = "";
+	has $.cxxparams is rw = "";
+	has $.cxxheader is rw = "";
 	has $.ldparams is rw = "";
 	has $.deps is rw = "";
-
+	
 	method exename { $!uid.chars > 0 ?? $!prefix ~ '-' ~ $!uid !! $!prefix }
 	method exepath { $build_dir ~ "/" ~ self.exename }
 	method objname { (so $!sourcefn ~~ /\.[cpp|cxx|cc]$/) ?? self.exename ~ ".obj" !! self.exename ~ ".o" }
 	method objpath { $build_dir ~ "/" ~ self.objname }
+	method cxxheaderpath { $include_dir ~ "/" ~ self.exename ~ "_include.h" }
 }
 
 # A single test case that has an input and is scheduled to be run with other tests
@@ -57,6 +61,12 @@ sub infix:<|~|> (Str $a, Str $b) {
 	if (so $a ~~ /\s$$/) or (so $b ~~ /^\s/) { return $a ~ $b; }
 	else { return $a ~ " " ~ $b; } 
 }
+sub infix:< <~> > (Str $a, Str $b) {
+	when ($a eq "") { return $b; }
+	when ($b eq "") { return $a; }
+	if (so $a ~~ /\n$$/) or (so $b ~~ /^\n/) { return $a ~ $b; }
+	else { return $a ~ "\n" ~ $b; }
+}
 
 my @generators = [];
 my @texes = [];
@@ -67,10 +77,10 @@ grammar TestInfo {
 	
 	rule TOP { ^ <statement-list> $ }
 	rule statement-list { [ <statement> ] * }
-	rule statement { <include-statement> | <ccparams-statement> | <ldparams-statement> | <input-statement> | <define-variants-statement> }
+	rule statement { <include-statement> | <cxxparams-statement> | <ldparams-statement> | <input-statement> | <define-variants-statement> }
 	
 	rule include-statement { '@include' <simple-value> }
-	rule ccparams-statement { '@ccparams' <value> }	
+	rule cxxparams-statement { '@cxxparams' <value> }	
 	rule ldparams-statement { '@ldparams' <value> }
 	rule input-statement { '@input' <simple-value> }
 	rule define-variants-statement { '@define-variants' <identifier> <value>  }
@@ -103,10 +113,10 @@ class Metaparser {
 			@.ops.append($inner.ops);
 		}();
 	}
-	method ccparams-statement($/) {
+	method cxxparams-statement($/) {
 		$<value> ==> map({$_.made}) ==> my @values;
 		@.ops.append: sub (TestGenerator $gen is rw) {
-			$gen.ccparams = $gen.ccparams X|~| @values;
+			$gen.cxxparams = $gen.cxxparams X|~| @values;
 		}
 	}
 	method input-statement($/) {
@@ -125,7 +135,9 @@ class Metaparser {
 		my $id = $<identifier>.made;
 		my @values = $<value>.made;
 		@.ops.append: sub (TestGenerator $gen is rw) {
-			$gen.ccparams = $gen.ccparams X|~| map({ "-D" ~ $id ~ "=" ~ $_ }, @values); 
+			#old style: we're putting these in their own include file now
+			#$gen.cxxparams = $gen.cxxparams X|~| map({ "-D" ~ $id ~ "=" ~ $_ }, @values);
+			$gen.cxxheader = $gen.cxxheader X<~> map({ "#define " ~ $id ~ ' ' ~ $_ }, @values);
 		}
 	}
 	method filename ($/) { make ($<blob> // $<quoted-string>).made; }
@@ -160,15 +172,23 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 		$grammar.parse($comment, actions => $parser);
 		$gen.ops.append( $parser.ops );
   }
-
-	$gen.ops ==> map({ $_($gen) });
 	
-	($gen.ccparams X, $gen.ldparams).kv
-	==> map(-> $i,($cc,$ld)	{ TestExecutable.new(uid=>$i, sourcefn=>$gen.sourcefn, prefix=>$gen.prefix, ccparams=>$cc, ldparams=>$ld) })
+	$gen.ops ==> map({ $_($gen) });
+
+	($gen.cxxheader X, $gen.cxxparams X, $gen.ldparams).kv
+	==> map(-> $i,($ch,$cc,$ld) { TestExecutable.new(uid=>$i, cxxheader=>$ch, sourcefn=>$gen.sourcefn, prefix=>$gen.prefix, cxxparams=>$cc, ldparams=>$ld) })
 	==> my @t;
 	$gen.texes = @t;
 	@texes.append: @t;
 
+	for @t -> $texe {
+		my $fh = open(:w, $texe.cxxheaderpath);
+		$fh.print("// include file for " ~ $texe.exename ~ "\n\n");
+		$fh.print($texe.cxxheader ~ "\n");
+		$fh.close();
+	}
+	
+	
 	my $multicase = $gen.inputs.elems > 1;
 	$gen.texes X, ([1...10000] Z, $gen.inputs)
 	==> map(-> ($texe,($i, $in)) { TestCase.new(uid=>($multicase??$i!!""), texe=>$texe, inputfile=>$in) })
@@ -180,8 +200,8 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 
 
 @texes
-	==> map({ (.objpath, .sourcefn, .ccparams, .sourcefn, .objpath) })
-	==> map({ sprintf("%s: %s\n\t\$(CXX) \$(CXXPARAMS) %s -c %s -o %s", $_) }) 
+	==> map({ (.objpath, .sourcefn, .cxxheaderpath, .cxxparams, .sourcefn, .objpath) })
+	==> map({ sprintf("%s: %s\n\t\$(CXX) \$(CXXPARAMS) -include %s %s -c %s -o %s", $_) }) 
 	==> my @objrules;
 
 @texes
@@ -196,6 +216,6 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 
 $makefile ~= "@test: " ~ (@cases>>.label) ~ "\n\n";
 $makefile ~= "@tests: " ~ (@texes>>.exepath) ~ "\n\n";
-$makefile ~= "@clean: \n\trm -rf " ~ @texes>>.exepath ~ " " ~ @texes>>.objpath ~ "\n\n";
+$makefile ~= "@clean: \n\trm -rf " ~ @texes>>.exepath ~ " " ~ @texes>>.objpath ~ " " ~ @texes>>.cxxheaderpath ~ "\n\n";
 $makefile ~= join("\n\n", @objrules, @exerules, @caserules);
 say $makefile;
