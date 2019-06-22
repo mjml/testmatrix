@@ -16,6 +16,10 @@ my @default_cxxparams = [ "-I" ~ $homedir.Str, "-Iinclude" ];
 my $build_dir = "./build";
 my $include_dir = "include";
 
+
+###
+# Act I: Define basic objects, a grammar, and a parser.
+
 # A source file generates one of these using all the /** **/ comments found inside it
 class TestGenerator {
 	has $.sourcefn is rw;
@@ -43,7 +47,7 @@ class TestExecutable {
 	method exepath { $build_dir ~ "/" ~ self.exename }
 	method objname { (so $!sourcefn ~~ /\.[cpp|cxx|cc]$/) ?? self.exename ~ ".obj" !! self.exename ~ ".o" }
 	method objpath { $build_dir ~ "/" ~ self.objname }
-	method cxxheaderpath { $include_dir ~ "/" ~ self.exename ~ "_include.h" }
+	method cxxheaderpath { $include_dir ~ "/" ~ self.exename ~ "_i.h" }
 }
 
 # A single test case that has an input and is scheduled to be run with other tests
@@ -53,6 +57,7 @@ class TestCase {
 	has TestExecutable $.texe is rw;
 	
 	method label { $!texe.exename ~ "-run" ~ $!uid }
+	
 }
 
 sub infix:<|~|> (Str $a, Str $b) {
@@ -77,13 +82,14 @@ grammar TestInfo {
 	
 	rule TOP { ^ <statement-list> $ }
 	rule statement-list { [ <statement> ] * }
-	rule statement { <include-statement> | <cxxparams-statement> | <ldparams-statement> | <input-statement> | <define-variants-statement> }
+	rule statement { <include-statement> | <cxxparams-statement> | <ldparams-statement> | <input-statement> | <define-statement> }
 	
 	rule include-statement { '@include' <simple-value> }
 	rule cxxparams-statement { '@cxxparams' <value> }	
 	rule ldparams-statement { '@ldparams' <value> }
+	rule define-statement { '@define' <identifier> <value>  }
 	rule input-statement { '@input' <simple-value> }
-	rule define-variants-statement { '@define-variants' <identifier> <value>  }
+	rule args-statement { '@args' <value> }
 	
 	rule value-list { '[' <value> [ ',' <value> ] * ']' }
 	token value { <simple-value> | <value-list> }
@@ -97,6 +103,7 @@ grammar TestInfo {
 	}
 	
 }
+
 class Metaparser {
 
 	has $.rootfn is rw;
@@ -131,7 +138,7 @@ class Metaparser {
 			$gen.ldparams = $gen.ldparams X|~| @values;
 		}
 	}
-	method define-variants-statement($/) {
+	method define-statement($/) {
 		my $id = $<identifier>.made;
 		my @values = $<value>.made;
 		@.ops.append: sub (TestGenerator $gen is rw) {
@@ -160,6 +167,9 @@ sub warning (Str $str) {
 
 my Str $makefile = "";
 
+###
+# Act II: Loop over test files and generate the AST
+
 for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filename { # loop over test?? cpp files
 	#my $filename = "test1.cpp".IO;
   my TestGenerator $gen = TestGenerator.new( sourcefn => $filename.Str, prefix => ($filename.Str ~~ /(.*)\.[cxx|cpp|cc|c]/)[0].Str );
@@ -175,12 +185,21 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 	
 	$gen.ops ==> map({ $_($gen) });
 
+	
 	($gen.cxxheader X, $gen.cxxparams X, $gen.ldparams).kv
-	==> map(-> $i,($ch,$cc,$ld) { TestExecutable.new(uid=>$i, cxxheader=>$ch, sourcefn=>$gen.sourcefn, prefix=>$gen.prefix, cxxparams=>$cc, ldparams=>$ld) })
+	==> map(-> $i,($ch,$cc,$ld) {  TestExecutable.new( uid=>$i, cxxheader=>$ch, sourcefn=>$gen.sourcefn, prefix=>$gen.prefix, cxxparams=>$cc, ldparams=>$ld) })
 	==> my @t;
 	$gen.texes = @t;
 	@texes.append: @t;
 
+	my $multicase = $gen.inputs.elems > 1;
+	$gen.texes X, ([1...10000] Z, $gen.inputs)
+	==> map(-> ($texe,($i, $in)) {  TestCase.new( uid=>($multicase??$i!!""), texe=>$texe, inputfile=>$in) })
+	==> my @c;
+	$gen.cases = @c;
+	@cases.append: @c;
+
+	# (Act II.b: generate an include file for each test executable containing its #define directives)
 	for @t -> $texe {
 		my $fh = open(:w, $texe.cxxheaderpath);
 		$fh.print("// include file for " ~ $texe.exename ~ "\n\n");
@@ -188,15 +207,10 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 		$fh.close();
 	}
 	
-	
-	my $multicase = $gen.inputs.elems > 1;
-	$gen.texes X, ([1...10000] Z, $gen.inputs)
-	==> map(-> ($texe,($i, $in)) { TestCase.new(uid=>($multicase??$i!!""), texe=>$texe, inputfile=>$in) })
-	==> my @c;
-	$gen.cases = @c;
-	@cases.append: @c;
-
 }
+
+###
+# Act III: Create the Makefile rules
 
 @texes
 	==> map({ (.objpath, .sourcefn, .cxxheaderpath, .cxxparams, .sourcefn, .objpath) })
@@ -208,13 +222,21 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 	==> map({ sprintf("%s: %s\n\t\$(CXX) \$(LDPARAMS) %s -o %s %s", $_) })
 	==> my @exerules;
 	
-@cases
-	==> map({ ( .label, .texe.exepath, .texe.exepath, .inputfile ) })
-	==> map({ sprintf("%s: %s\n\t./%s %s", $_) })
-	==> my @caserules;
+#@cases
+#	==> map({ ( .label, .texe.exepath, .texe.exepath, .inputfile ) })
+#	==> map({ sprintf("%s: %s\n\t./%s %s", $_) })
+#	==> my @caserules;
 
 $makefile ~= "@test: " ~ (@cases>>.label) ~ "\n\n";
 $makefile ~= "@tests: " ~ (@texes>>.exepath) ~ "\n\n";
 $makefile ~= "@clean: \n\trm -rf " ~ @texes>>.exepath ~ " " ~ @texes>>.objpath ~ " " ~ @texes>>.cxxheaderpath ~ "\n\n";
-$makefile ~= join("\n\n", @objrules, @exerules, @caserules);
+$makefile ~= join("\n\n", @objrules, @exerules); #, @caserules);
 say $makefile;
+
+
+# (Act III.b: generate a test manifest for our test runner to parse and act upon)
+{
+	my $fh = open(:w, "./build/manifest.txt");
+	map({ $fh.printf("run \{ \n\texec %s\n\tinput %s\n\toutput %s\n\}\n\n", $_) }) <==
+	map({ .texe.exepath, .inputfile || "\"\"", "output/" ~ .label ~ ".txt" }) <== @cases;
+}
