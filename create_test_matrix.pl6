@@ -11,13 +11,15 @@
 
 #use Grammar::Tracer;
 
-my $homedir = $*PROGRAM.absolute.IO.resolve.dirname.IO;
+my $homedir = $*PROGRAM.dirname.IO;
+my @default_ccparams = [ "-I" ~ $homedir.Str ];
+my $build_dir = "./build";
 
 # A source file generates one of these using all the /** **/ comments found inside it
 class TestGenerator {
 	has $.sourcefn is rw;
 	has $.prefix is rw;
-	has @.ccparams is rw = [""];
+	has @.ccparams is rw = [join @default_ccparams];
 	has @.ldparams is rw = [""];
 	has @.inputs is rw = [""];
 	has @.ops is rw = [];
@@ -33,9 +35,11 @@ class TestExecutable {
 	has $.ccparams is rw = "";
 	has $.ldparams is rw = "";
 	has $.deps is rw = "";
-	
+
 	method exename { $!uid.chars > 0 ?? $!prefix ~ '-' ~ $!uid !! $!prefix }
+	method exepath { $build_dir ~ "/" ~ self.exename }
 	method objname { (so $!sourcefn ~~ /\.[cpp|cxx|cc]$/) ?? self.exename ~ ".obj" !! self.exename ~ ".o" }
+	method objpath { $build_dir ~ "/" ~ self.objname }
 }
 
 # A single test case that has an input and is scheduled to be run with other tests
@@ -43,6 +47,8 @@ class TestCase {
 	has $.uid is rw = "";
 	has $.inputfile is rw = "";
 	has TestExecutable $.texe is rw;
+	
+	method label { $!texe.exename ~ "-run" ~ $!uid }
 }
 
 sub infix:<|~|> (Str $a, Str $b) {
@@ -163,29 +169,33 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 	$gen.texes = @t;
 	@texes.append: @t;
 
-	($gen.texes X, $gen.inputs).kv
-	==> map(-> $i, ($texe, $in) { TestCase.new(uid=>$i, texe=>$texe, inputfile=>$in) })
-	==> @cases;
+	my $multicase = $gen.inputs.elems > 1;
+	$gen.texes X, ([1...10000] Z, $gen.inputs)
+	==> map(-> ($texe,($i, $in)) { TestCase.new(uid=>($multicase??$i!!""), texe=>$texe, inputfile=>$in) })
+	==> my @c;
+	$gen.cases = @c;
+	@cases.append: @c;
 
 }
 
 
 @texes
-	==> map({ (.objname, .sourcefn, .ccparams, .sourcefn, .objname) })
+	==> map({ (.objpath, .sourcefn, .ccparams, .sourcefn, .objpath) })
 	==> map({ sprintf("%s: %s\n\t\$(CXX) \$(CXXPARAMS) %s -c %s -o %s", $_) }) 
 	==> my @objrules;
 
 @texes
-	==> map({ (.exename, .objname, .ldparams, .exename, .objname) })
+	==> map({ (.exepath, .objpath, .ldparams, .exepath, .objpath) })
 	==> map({ sprintf("%s: %s\n\t\$(CXX) \$(LDPARAMS) %s -o %s %s", $_) })
 	==> my @exerules;
 	
 @cases
-	==> map({ ( .texe.exename, .texe.exename, .texe.exename, .inputfile ) })
-	==> map({ sprintf("%s-run: %s\n\t./%s %s", $_) })
+	==> map({ ( .label, .texe.exepath, .texe.exepath, .inputfile ) })
+	==> map({ sprintf("%s: %s\n\t./%s %s", $_) })
 	==> my @caserules;
 
-$makefile ~= "@tests: " ~ (@cases ==> map({ $_.texe.exename ~ "-run" })) ~ "\n\n";
-$makefile ~= "@clean: \n\trm -rf " ~ @texes>>.exename ~ " " ~ @texes>>.objname ~ "\n\n";
+$makefile ~= "@test: " ~ (@cases>>.label) ~ "\n\n";
+$makefile ~= "@tests: " ~ (@texes>>.exepath) ~ "\n\n";
+$makefile ~= "@clean: \n\trm -rf " ~ @texes>>.exepath ~ " " ~ @texes>>.objpath ~ "\n\n";
 $makefile ~= join("\n\n", @objrules, @exerules, @caserules);
 say $makefile;
