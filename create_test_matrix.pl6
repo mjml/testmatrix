@@ -185,5 +185,7 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 	==> map({ sprintf("%s-run: %s\n\t./%s %s", $_) })
 	==> my @caserules;
 
-$makefile = join("\n\n", @objrules, @exerules, @caserules);
+$makefile ~= "@tests: " ~ (@cases ==> map({ $_.texe.exename ~ "-run" })) ~ "\n\n";
+$makefile ~= "@clean: \n\trm -rf " ~ @texes>>.exename ~ " " ~ @texes>>.objname ~ "\n\n";
+$makefile ~= join("\n\n", @objrules, @exerules, @caserules);
 say $makefile;
