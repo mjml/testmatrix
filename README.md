@@ -24,7 +24,7 @@ Say you have a file named `test1.cpp`:
 /**
  * @cxxparams "-I.. -g"
  * @cxxparams [ -DDEBUG=0, -DDEBUG=0 ]
- **
+ **/
 
 #include <stdio.h>
 ...
