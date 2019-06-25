@@ -77,7 +77,8 @@ class ManifestParser is BasicParser {
 
 sub on_test_finished (Proc $p, Str $testname, Int $h) {
 	if ($console_mode) {
-		if $p.exitcode == 0 {
+		my $code = $p.exitcode || $p.signal;
+		if $code == 0 {
 			$console_lock.protect: { printf("\e7\e[%sA\e[1C\e[38;2;0;180;0mPASS\e[0m\e8", $h) }
 		} else {
 			$console_lock.protect: { printf("\e7\e[%sA\e[1C\e[38;2;180;0;0mFAIL\e[0m\e8", $h) }
@@ -102,5 +103,5 @@ console_print("Waiting for tests to finish...\n");
 
 await(@work);
 
-printf("\e7\e[1A                                   \e8\n");
+printf("\e7\e[1A                                   \e8");
 say "Done.";
