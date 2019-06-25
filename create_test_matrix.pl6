@@ -1,5 +1,3 @@
-#!/bin/perl6
-
 #
 # The purpose of this script is to scan the current directory for all .cpp files and look for '@' directives
 # in their /* comment blocks */. These directives contain the necessary information for generating "Makefile.matrix",
@@ -9,12 +7,16 @@
 # product matrix that determines a large number of executables to be built and run.
 #
 
-#use Grammar::Tracer;
-
 my $homedir = $*PROGRAM.dirname.IO;
 my @default_cxxparams = [ "-I" ~ $homedir.Str, "-Iinclude" ];
 my $build_dir = "./build";
 my $include_dir = "include";
+
+#use Grammar::Tracer;
+
+# In order to import this library, perl6 needs to be called with the -I switch
+# to let it know where to look for the module.
+use TestMatrix;
 
 
 ###
@@ -76,14 +78,12 @@ sub infix:< <~> > (Str $a, Str $b) {
 my @generators = [];
 my @texes = [];
 my @cases = [];
-	
 
-grammar TestInfo {
+grammar TestInfo is TestMatrix::Basic {
 	
 	rule TOP { ^ <statement-list> $ }
 	rule statement-list { [ <statement> ] * }
 	rule statement { <include-statement> | <cxxparams-statement> | <ldparams-statement> | <input-statement> | <define-statement> }
-	
 	rule include-statement { '@include' <simple-value> }
 	rule cxxparams-statement { '@cxxparams' <value> }	
 	rule ldparams-statement { '@ldparams' <value> }
@@ -91,12 +91,6 @@ grammar TestInfo {
 	rule input-statement { '@input' <simple-value> }
 	rule args-statement { '@args' <value> }
 	
-	rule value-list { '[' <value> [ ',' <value> ] * ']' }
-	token value { <simple-value> | <value-list> }
-	token simple-value { <blob> | <quoted-string> }
-	token identifier { <[a..zA..Z_]> (<[\w]>)* }
-	token quoted-string { "\"" <-["]>+ "\"" }
-	token blob { <[\S]-[\,]-[\"]>+ }
 	
 	method error(--> ::TestInfo:D) {
 		return self;
@@ -104,7 +98,7 @@ grammar TestInfo {
 	
 }
 
-class Metaparser {
+class Metaparser is BasicParser {
 
 	has $.rootfn is rw;
 	has $.filename is rw;
@@ -147,13 +141,6 @@ class Metaparser {
 			$gen.cxxheader = $gen.cxxheader X<~> map({ "#define " ~ $id ~ ' ' ~ $_ }, @values);
 		}
 	}
-	method filename ($/) { make ($<blob> // $<quoted-string>).made; }
-	method value ($/) { make ($<simple-value> // $<value-list>).made  }
-	method simple-value ($/) { make ($<blob> // $<quoted-string>).made; }
-	method value-list ($/) { make $<value>.elems > 1 ?? $<value>».made !! [ <value>.made ]; }
-	method quoted-string ($/) { make $/.Str.substr(1).chop(1); }
-	method identifier ($/) { make $/.Str;  }
-	method blob ($/) { make $/.Str;  }
 
 }
 
@@ -238,5 +225,5 @@ say $makefile;
 {
 	my $fh = open(:w, "./build/manifest.txt");
 	map({ $fh.printf("run \{ \n\texec %s\n\tinput %s\n\toutput %s\n\}\n\n", $_) }) <==
-	map({ .texe.exepath, .inputfile || "\"\"", "output/" ~ .label ~ ".txt" }) <== @cases;
+	map({ .texe.exepath, .inputfile || "\"\"", "output/" ~ .label ~ ".out" }) <== @cases;
 }
