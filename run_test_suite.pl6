@@ -5,14 +5,12 @@ use TestMatrix;
 my $builddir = "./build";
 my $outputdir = "./output";
 my $manifestfn = "manifest.txt";
-my Int $parlimit = 1;
-my $mr_run = 0;
+
 my Bool $console_mode = $*OUT.t;
+my $parlimit = 1;
 my $current_cline = 0;
 my $console_lock = Lock.new;
 my Promise @work = [];
-
-my Proc::Async @testprocs;
 
 sub console_print (+@values) {
 	$console_lock.lock();
@@ -78,10 +76,12 @@ class ManifestParser is BasicParser {
 sub on_test_finished (Proc $p, Str $testname, Int $h) {
 	if ($console_mode) {
 		my $code = $p.exitcode || $p.signal;
-		if $code == 0 {
-			$console_lock.protect: { printf("\e7\e[%sA\e[1C\e[38;2;0;180;0mPASS\e[0m\e8", $h) }
-		} else {
+		if $p.exitcode > 0 {
+			$console_lock.protect: { printf("\e7\e[%sA\e[1C\e[38;2;180;0;0mERRO\e[0m\e8", $h) }			
+		} elsif $p.signal > 0 {
 			$console_lock.protect: { printf("\e7\e[%sA\e[1C\e[38;2;180;0;0mFAIL\e[0m\e8", $h) }
+		} else {
+			$console_lock.protect: { printf("\e7\e[%sA\e[1C\e[38;2;0;180;0mPASS\e[0m\e8", $h) }
 		}
 	} else {
 		# need to pass the label in here
