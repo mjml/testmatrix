@@ -152,6 +152,11 @@ sub warning (Str $str) {
 	say "\e[38;5;166mWarning\e[0m: " ~ $str;
 }
 
+sub quote (Str $str) {
+	$str ~~ s/(<[\"]>)/\\$0/;
+	'"' ~ $str ~ '"';
+}
+
 my Str $makefile = "";
 
 ###
@@ -171,16 +176,20 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
   }
 	
 	$gen.ops ==> map({ $_($gen) });
-
 	
 	($gen.cxxheader X, $gen.cxxparams X, $gen.ldparams).kv
-	==> map(-> $i,($ch,$cc,$ld) {  TestExecutable.new( uid=>$i, cxxheader=>$ch, sourcefn=>$gen.sourcefn, prefix=>$gen.prefix, cxxparams=>$cc, ldparams=>$ld) })
+	==> map(-> $i,($ch,$cc,$ld) {  TestExecutable.new( uid=>$i,
+																										 cxxheader=>$ch,
+																										 sourcefn=>$gen.sourcefn,
+																										 prefix=>$gen.prefix,
+																										 cxxparams=>$cc,
+																										 ldparams=>$ld) })
 	==> my @t;
 	$gen.texes = @t;
 	@texes.append: @t;
-
+	
 	my $multicase = $gen.inputs.elems > 1;
-	$gen.texes X, ([1...10000] Z, $gen.inputs)
+	$gen.texes X, ([1...*] Z, $gen.inputs)
 	==> map(-> ($texe,($i, $in)) {  TestCase.new( uid=>($multicase??$i!!""), texe=>$texe, inputfile=>$in) })
 	==> my @c;
 	$gen.cases = @c;
@@ -190,6 +199,9 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 	for @t -> $texe {
 		my $fh = open(:w, $texe.cxxheaderpath);
 		$fh.print("// include file for " ~ $texe.exename ~ "\n\n");
+		$fh.say: sprintf("#define __EXE__ \"%s\"", $texe.exename);
+		$fh.say: sprintf("#define __CXXPARAMS__ %s", quote($texe.cxxparams));
+		$fh.say: sprintf("#define __LDPARAMS__ %s", quote($texe.ldparams));
 		$fh.print($texe.cxxheader ~ "\n");
 		$fh.close();
 	}
