@@ -52,7 +52,7 @@ class ManifestParser is BasicParser {
 		my $sargs = join(' ', @args) || "";
 		my $testname;
 		sub { $execfile ~~ /\.\/build\/(.*)/; $testname = $0.Str }();
-		$inputfile ==> map({ "-f " ~ $_ }) ==> @args;
+		$inputfile ==> map( "-f " ~ * ) ==> @args;
 		my $proc = Proc::Async.new( $execfile, $sargs );
 		my $oh = $outputfile.IO.open(:w);
 		$proc.bind-stdout($oh);
@@ -70,7 +70,6 @@ class ManifestParser is BasicParser {
 	method args-decl ($/) { make $<value>.made }
 	method input-decl ($/) { make $<filename>.made }
 	method output-decl ($/) { make $<filename>.made }
-	
 }
 
 sub on_test_finished (Proc $p, Str $testname, Int $h) {

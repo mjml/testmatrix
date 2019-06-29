@@ -163,7 +163,7 @@ my Str $makefile = "";
 # Act II: Loop over test files and generate the AST
 
 for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filename { # loop over test?? cpp files
-	#my $filename = "test1.cpp".IO;
+	
   my TestGenerator $gen = TestGenerator.new( sourcefn => $filename.Str, prefix => ($filename.Str ~~ /(.*)\.[cxx|cpp|cc|c]/)[0].Str );
   my $fh = $filename.open;
   for $fh.comb(/\/\*\*(.+)\*\*\//, True) -> $match {
@@ -189,12 +189,12 @@ for sort dir('.', test => { .IO.f && $_ ~~ /test.*\.[cxx|cpp|cc|c]/ }) -> $filen
 	@texes.append: @t;
 	
 	my $multicase = $gen.inputs.elems > 1;
-	$gen.texes X, ([1...*] Z, $gen.inputs)
+	$gen.texes X, ([1...∞] Z, $gen.inputs)
 	==> map(-> ($texe,($i, $in)) {  TestCase.new( uid=>($multicase??$i!!""), texe=>$texe, inputfile=>$in) })
 	==> my @c;
 	$gen.cases = @c;
 	@cases.append: @c;
-
+	
 	# (Act II.b: generate an include file for each test executable containing its #define directives)
 	for @t -> $texe {
 		my $fh = open(:w, $texe.cxxheaderpath);
