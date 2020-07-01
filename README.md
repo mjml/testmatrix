@@ -8,11 +8,11 @@ You can use this to build and run unit tests from C++ source code.
 Each suite of tests is built from a single .cpp file that contains a number
   of directives.
 Some of these directives allow you to specify a list of alternates.
-For each alternate, a different test binary is compiled from a single original source file.
+For each alternate, a different test binary is produced.
 When you specify a range of alternates in this way, you define a new dimension or *axis*
   of the resulting test matrix.
-When you specify several axes, the script will compose these dimensions into a
-  multidimensional matrix of test executables to build and run -- all from a single source file.
+When you specify several axes, the script will compose these dimensions into a single dense
+  multidimensional matrix of test executables to build and run, and all of this from a single source file.
 
 As an added feature, the script will generate a short descriptor that identifies a given test executable within the matrix.
 This descriptor is appended to the filename of the test executable.
